@@ -1,0 +1,62 @@
+Program = {
+    (COMMENT / HornClause "." _)*
+    #Program
+} EOF
+
+EOF = !.
+_ = [ \t\r\n]*
+
+BR = [\r\n] / EOF
+
+COMMENT = "%" (!BR .)* BR
+
+HornClause = 
+    / Rule
+    / Fact
+    / Query
+
+Fact = {
+    Literal
+    #Fact
+}
+Rule = {
+    Literal ":-" Literal ("," Literal)*
+    #Rule
+}
+Query = {
+    "?-" Literal ("," Literal)*
+    #Query
+}
+
+Literal = {
+    Predicate "(" Term ("," Term)* ")"
+    #Literal
+}
+FunctionTerm = {
+    Function "(" Term ("," Term)* ")"
+    #FunctionTerm
+}
+Term =
+    / FunctionTerm
+    / Constant
+    / Variable
+
+LOWERCASE = [a-z] [0-9a-z]*
+UPPERCASE = [A-Z] [0-9A-Z]*
+
+Constant = {
+    LOWERCASE
+    #Constant
+}
+Variable = {
+    UPPERCASE
+    #Variable
+}
+Function = {
+    LOWERCASE
+    #Function
+}
+Predicate = {
+    LOWERCASE
+    #Predicate
+}
