@@ -1,0 +1,81 @@
+Theory = {
+    (COMMENT / (Formula ("," / BR)) BR*)+
+    #Theory
+} EOF
+
+BR = [\r\n] / EOF
+
+COMMENT = "//" (!BR .)* BR
+
+Formula = {
+    LITORFML _ Operator _ LITORFML
+    / Literal
+    #Formula
+}
+
+LITORFML = Literal / "(" Formula ")"
+
+Operator = {
+    '∧' / '∨' / '→' / '↔'
+    #Operator
+}
+
+Neg = {
+    ("¬" / "~")
+    #Neg
+}
+
+Literal =
+    { Neg+ Literal #Not }
+    / { Term _ '=' _ Term #Equality }
+    / { (All / Ext)+ "." LITORFML #Quantified }
+    / { (Predicate / MetaVariable) "(" TERMLIST ")" #Atomic }
+
+All = {
+    "∀" (MetaVariable / VectVariable / Variable)
+    #All
+}
+
+Ext = {
+    "∃" (MetaVariable / VectVariable / Variable)
+    #Ext
+}
+
+TERMLIST = Term ("," Term)*
+
+Term = {
+    { Function "(" TERMLIST ")" #Function }
+    / VectVariable
+    / Variable
+    / Constant
+    #Term
+}
+
+Predicate = {
+    LOWERCASE
+    #Predicate
+}
+Function = {
+    LOWERCASE
+    #Function
+}
+Variable = { 
+    UPPERCASE
+    #Variable
+}
+MetaVariable = {
+    GREEKLETTER
+    #MetaVariable
+}
+VectVariable = {
+    UPPERCASE '-vect'
+    #VectVariable
+}
+Constant = {
+    LOWERCASE
+    #Constant
+}
+
+LOWERCASE = [a-z] [0-9a-z]*
+UPPERCASE = [A-Z] [0-9A-Z]*
+GREEKLETTER = [α-ωΑ-Ω]
