@@ -17,7 +17,7 @@ class Var(AST):
         self.name = name
         self.id = next(_var_counter)
         self.name_or_id = "name"
-        self.label = name if self.name_or_id == "name" else id
+        self.label = name if self.name_or_id == "name" else self.id
     def __repr__(self):
         # return f'{self.name}_{self.id}' # デバッグ用
         return f'{self.name}'
@@ -219,13 +219,13 @@ def free_vars(ast, bound=None):
     boundは現在束縛されている変数(Var)の集合またはリスト。"""
     if bound is None:
         bound = set()
-
+    #print(ast)
     match ast:
         case Var(name):
             # Varがboundにないなら自由変数
             # boundはVarオブジェクト自体を保持すると比較が容易
             # ここではVarのidで比較することも可能
-            return {ast} if ast not in bound else set()
+            return {ast} if ast.label not in [v.label for v in bound] else set()
         case Constant(_):
             return set()
         case Predicate(name, args):
@@ -243,6 +243,13 @@ def free_vars(ast, bound=None):
         case Exists(vars, body):
             new_bound = bound | set(vars)
             return free_vars(body, new_bound)
+        case Clause(positive, negative):
+            s = set()
+            for p in positive:
+                s |= free_vars(p, bound)
+            for n in negative:
+                s |= free_vars(n, bound)
+            return s
         case _:
             return set()
 
@@ -299,13 +306,13 @@ def substitute(ast, var, term):
                 return type(ast)(vars, body)
             else:
                 fvars_term = free_vars(term)
-                bound_ids = {v.label for v in vars}
-                conflict_ids = bound_ids & {fv.label for fv in fvars_term}
+                bound_labels = {v.label for v in vars}
+                conflict_labels = bound_labels & {fv.label for fv in fvars_term}
 
                 new_vars = vars
                 new_body = body
                 for v2 in vars:
-                    if v2.label in conflict_ids:
+                    if v2.label in conflict_labels:
                         # α変換
                         new_v = Var(alpha_var_name(v2.name))
                         new_body = alpha_rename(new_body, v2, new_v)
@@ -314,6 +321,47 @@ def substitute(ast, var, term):
                 return type(ast)(new_vars, substitute(new_body, var, term))
         case _:
             return ast
+
+def simul_subs(subs, ast):
+    # 同時代入
+    match ast:
+        case Var(name):
+            if ast.label in [v.label for v in subs]:
+                key = [v for v in subs if v.label == ast.label][0]
+                return subs[key]
+            return ast
+        case Constant(_):
+            return ast
+        case Predicate(name, args):
+            return Predicate(name, [simul_subs(subs, arg) for arg in args])
+        case Not(p):
+            return Not(simul_subs(subs, p))
+        case And(p,q) | Or(p,q) | Imp(p,q) | Iff(p,q):
+            return type(ast)(simul_subs(subs, p), simul_subs(subs, q))
+        case ForAll(vars, body) | Exists(vars, body):
+            fvars_term = {v for v in free_vars(ast) for ast in subs.values()} # 代入先のどれかの項に含まれる自由変数
+            bound_labels = {v.label for v in vars}
+            conflict_labels = bound_labels & {fv.label for fv in fvars_term}
+            new_vars = vars
+            new_body = body
+            for v2 in vars:
+                if v2.label in conflict_labels:
+                    # α変換
+                    new_v = Var(alpha_var_name(v2.name))
+                    new_body = alpha_rename(new_body, v2, new_v)
+                    new_vars = [new_v if x.label == v2.label else x for x in new_vars]
+            return type(ast)(new_vars, simul_subs(subs, new_body))
+        case Clause(positive, negative): # 節の場合
+            return Clause([simul_subs(subs, p) for p in positive], [simul_subs(subs, p) for p in negative])
+        case _:
+            return ast
+
+def compose(subs1, subs2):
+    # 同時代入の合成
+    subs = subs2.copy()
+    for var, term in subs1.items():
+        subs[var] = simul_subs(subs2, term)
+    return subs
 
 
 """
@@ -450,15 +498,113 @@ def cnf_convert(ast):
     ast = distribute_or(ast)
     return ast
 
+"""
+Prologの節関連の処理
+"""
+class Clause(AST):
+    __match_args__ = ("positive", "negative")
+
+    def __init__(self, positive=None, negative=None):
+
+        self.positive = positive if positive is not None else []
+        self.negative = negative if negative is not None else []
+
+    def __repr__(self):
+        pos_str = ', '.join(map(str, self.positive)) if self.positive else 'true'
+        neg_str = ', '.join(map(str, self.negative)) if self.negative else 'true'
+        return f"{pos_str} :- {neg_str}" if self.negative else pos_str
+
+def parse_prolog_tree_to_ast(tree):
+    env = [{}] # スコープを表現するための環境(節ごとの変数を格納する．env[-1]しか参照されない)
+
+    def to_ast(tree):
+        tag = tree.getTag()
+
+        if tag == 'Program':
+            return [to_ast(child) for child in tree]
+
+        elif tag == 'Fact':
+            env.append({})
+            literal = to_ast(tree[0])
+            return Clause(positive=[literal])
+
+        elif tag == 'Rule':
+            env.append({})
+            head = to_ast(tree[0])
+            body = [to_ast(child) for child in tree[1:]]
+            return Clause(positive=[head], negative=body)
+
+        elif tag == 'Query':
+            env.append({})
+            body = [to_ast(child) for child in tree]
+            return Clause(negative=body)
+
+        elif tag == 'Literal':
+            predicate = tree[0].getToken()
+            args = [to_ast(child) for child in tree[1:]]
+            return Predicate(predicate, args)
+
+        elif tag == 'FunctionTerm':
+            function = tree[0].getToken()
+            args = [to_ast(child) for child in tree[1:]]
+            return Predicate(function, args)
+
+        elif tag == 'Term':
+            return to_ast(tree[0])
+
+        elif tag == 'Constant':
+            name = tree.getToken()
+            return Constant(name)
+          
+        elif tag == 'Variable':
+            name = tree.getToken()
+            scope = env[-1] # 現在のスコープ(節)
+            if name not in scope:
+                env[-1][name] = Var(name)
+            return scope[name]
+            
+        else:
+            raise ValueError(f"Unknown tag: {tag}")
+
+    return to_ast(tree)
+
+def cnf_to_clause(cnf):
+    def merge_clause(c1, c2):
+        return Clause(positive=c1.positive+c2.positive, negative=c1.negative+c2.negative)
+    
+    match cnf:
+        case And(p, q):
+            return cnf_to_clause(p) + cnf_to_clause(q)
+        case Or(p, q):
+            return [merge_clause(cnf_to_clause(p)[0], cnf_to_clause(q)[0])]
+        case Not(p):
+            return [Clause(negative=[p])]
+        case _:
+            return [Clause(positive=[cnf])]
+
+def cnfs_to_clause(cnfs):
+    return [c for cnf in cnfs for c in cnf_to_clause(cnf)]
+
     
 def test_01():
     peg = pg.grammar("logic.tpeg")
     parser = pg.generate(peg)
     tree = parser("∃Z∀X. (r(X,Z) ∧ ∀X∃Y.(p(X) → q(Z,Y)))")
+    print("Tree:", tree)
     ast = parse_to_ast(tree)
     print("AST:", ast)
     cnf_ast = cnf_convert(ast)
     print("CNF AST:", cnf_ast)
+    clauses = cnf_to_clause(cnf_ast)
+    print("Clauses:", clauses)
+
+def test_02():
+    peg = pg.grammar("prolog.tpeg")
+    parser = pg.generate(peg)
+    code = "parent(X, Y) :- mother(X, Y).\nancestor(X, Z) :- parent(X, Y), ancestor(Y, Z)."
+    tree = parser(code)
+    # Convert to AST
+    program_ast = parse_prolog_tree_to_ast(tree)
 
 if __name__ == "__main__":
    test_01()
