@@ -111,8 +111,8 @@ def parse_to_ast(tree):
             children = list(tree)
     
             if len(children) == 1:
-                return to_ast(children[0]) # 定義上この分岐はおそらく使われない
-        
+                return to_ast(children[0])
+            
             left = to_ast(children[0])
             op = children[1].getToken()
             right = to_ast(children[2])
@@ -127,6 +127,11 @@ def parse_to_ast(tree):
                 return Iff(left, right)
             else:
                 return None
+        elif tag == "Not":
+            result = to_ast(tree[-1])
+            for _ in range(len(tree)-1):
+                result = Not(result)
+            return result
     
         elif tag == 'Quantified':
             current_type = None
@@ -394,6 +399,8 @@ def neg_in(ast):
     match ast:
         case Not(p):
             match p:
+                case Not(p1):
+                    return neg_in(p1)
                 case And(p1, p2):
                     return Or(neg_in(Not(p1)), neg_in(Not(p2)))
                 case Or(p1, p2):
@@ -413,6 +420,18 @@ def neg_in(ast):
             return type(ast)(neg_in(p), neg_in(q))
         case ForAll(vars, body)|Exists(vars, body):
             return type(ast)(vars, neg_in(body))
+        case _:
+            return ast
+
+# 二重否定除去
+def rm_double_neg(ast):
+    match ast:
+        case Not(Not(p)):
+            return rm_double_neg(p)
+        case And(p,q)|Or(p,q)|Imp(p,q)|Iff(p,q):
+            return type(ast)(rm_double_neg(p), rm_double_neg(q))
+        case ForAll(vars, body)|Exists(vars, body):
+            return type(ast)(vars, rm_double_neg(body))
         case _:
             return ast
 
@@ -493,6 +512,7 @@ def distribute_or(ast):
 def cnf_convert(ast):
     ast = elim_imp(ast)
     ast = neg_in(ast)
+    ast = rm_double_neg(ast)
     ast = skolem(ast)
     ast = rm_univ(ast)
     ast = distribute_or(ast)
@@ -589,8 +609,8 @@ def cnfs_to_clause(cnfs):
 def test_01():
     peg = pg.grammar("logic.tpeg")
     parser = pg.generate(peg)
-    tree = parser("∃Z∀X. (r(X,Z) ∧ ∀X∃Y.(p(X) → q(Z,Y)))")
-    print("Tree:", tree)
+    tree = parser("∃Z∀X. (r(X,Z) ∧ ∀X∃Y.¬¬(p(X) → ¬¬q(Z,Y)))")
+    print("Tree:", repr(tree))
     ast = parse_to_ast(tree)
     print("AST:", ast)
     cnf_ast = cnf_convert(ast)
@@ -605,6 +625,21 @@ def test_02():
     tree = parser(code)
     # Convert to AST
     program_ast = parse_prolog_tree_to_ast(tree)
+
+def test_03():
+    # group.folを読み込んでPrologで処理
+    peg = pg.grammar("logic.tpeg")
+    parser = pg.generate(peg)
+    with open("predicate_logic_examples/group.fol", "r") as f:
+        code = f.read()
+    tree = parser(code)
+    program = []
+    for clause in tree:
+        ast = parse_to_ast(clause)
+        cnf_ast = cnf_convert(ast)
+        clauses = cnf_to_clause(cnf_ast)
+        program += clauses
+    print(program)
 
 if __name__ == "__main__":
    test_01()

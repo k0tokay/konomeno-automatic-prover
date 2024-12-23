@@ -21,12 +21,12 @@ Operator = {
 }
 
 Neg = {
-    ("¬" / "~")
+    '¬'
     #Neg
 }
 
 Literal =
-    { Neg+ Literal #Not }
+    { (Neg _)+ LITORFML #Not}
     / { Term _ '=' _ Term #Equality }
     / { (All / Ext)+ "." LITORFML #Quantified }
     / { (Predicate / MetaVariable) "(" TERMLIST ")" #Atomic }

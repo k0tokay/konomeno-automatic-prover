@@ -1,0 +1,202 @@
+Discourse = {
+    (COMMENT / (SENTORQUES (BR / EOF)))*
+    #Discourse
+} EOF
+
+BR = [\r\n]+
+
+COMMENT = "//" (!BR .)* BR
+
+SENTORQUES = Question / Sentence
+
+Question = {
+    "hato" Sentence "no"
+    #Question
+}
+
+Sentence = {
+    LITORPS _ Operator _ LITORPS
+    / Literal
+    #Sentence
+}
+
+LITORPS = Literal / "cu" Sentence "nais"
+LITORS = Literal / Sentence
+
+Operator = {
+    'lite' / 'liko' / 'lista' / 'kalista'
+    #Operator
+}
+
+Literal =
+    { (SentNeg _)+ LITORS "tos" #Not }
+    / { (Quantifier ('-' Label)* _)+ LITORS "tos" #Quantified }
+    / Graph
+
+Quantifier = {
+    (PreNodeQ / PostNodeQ) '-lilee'
+    / 'kostafe'
+    #Quantifier
+}
+
+SentNeg = {
+    'meide'
+    #SentNeg
+}
+
+Graph = {
+    Line ("," Line)*
+    #Graph
+}
+
+Line = { 
+    Node _ (Edge _ Node _)*
+    #Line
+}
+
+Node = {
+    (Prefix '-')* CORPL ('-' Suffix)* ('-' Label)?
+    #Node
+}
+
+CORPL = PullDown / Concept
+
+Prefix = {
+    LeftDemon
+    / RightDemon
+    / Interrogative
+    / PreNodeQ
+    / PreNodePDQ
+    #Prefix
+}
+
+Suffix = {
+    Abbrev
+    / PostNodeQ
+    / PostNodePDQ
+    #Suffix
+}
+
+LeftDemon = {
+    'sen'
+    / 'tan'
+    / 'seton'
+    / NUM '-ibi'
+    #LeftDemon
+}
+
+RightDemon = {
+    'lon'
+    / 'con'
+    / 'colun'
+    / NUM '-lobi'
+    #RightDemon
+}
+
+Interrogative = {
+    'ena'
+    #Interrogative
+}
+
+PreNodeQ = {
+    'サンプル'
+    #PreNodeQ
+}
+
+PreNodePDQ = {
+    'laf'
+    / 'le'
+    / 'fe'
+    #PreNodePDQ
+}
+
+PostNodeQ = {
+    'san'
+    / 'kon'
+    / 'anic'
+    / 'fante'
+    / 'mefante'
+    #PostNodeQ
+}
+
+PostNodePDQ = {
+    'サンプル'
+    #PostNodePDQ
+}
+
+Concept = {
+    !RESERVED LOWERCASE
+    #Concept
+}
+
+PDQuantifier = {
+    'min'
+    / 'ceja'
+    / 'lesta'
+    #PDQuantifier
+}
+
+PullDown = {
+    PDQuantifier ('-' Label)* _ LITORS "tos"
+    / Edge '-nov'
+    #PullDown
+}
+
+Abbrev = {
+    Tense
+    #Abbrev
+}
+
+Tense = {
+    'ik'
+    / 'en'
+    / 'as'
+    #Tense
+}
+
+Edge = {
+    (EdgePrefix '-')* Relation ('-' Label)?
+    #Edge
+}
+
+EdgePrefix = {
+    Neg
+    / Trans
+    #EdgePrefix
+}
+
+Neg = {
+    'be'
+    #Neg
+}
+
+Trans = {
+    'me'
+    #Trans
+}
+
+Label = {
+    GREEKLETTER
+    #Label
+}
+
+Relation = {
+    !RESERVED LOWERCASE
+    #Relation
+}
+
+LEFTPAREN = "cu" / "min" / "lesta" / "meide"
+RIGHTPAREN = "nais" / "tos"
+
+RESERVED = 
+    Prefix
+    / Suffix
+    / EdgePrefix
+    / Operator
+    / LEFTPAREN
+    / RIGHTPAREN
+
+LOWERCASE = [a-z] [0-9a-z]*
+UPPERCASE = [A-Z] [0-9A-Z]*
+GREEKLETTER = [α-ωΑ-Ω] [0-9]*
+NUM = [0-9]+
