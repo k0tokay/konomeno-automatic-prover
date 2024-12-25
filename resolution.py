@@ -77,7 +77,11 @@ def SLD_resolution(KB, query):
                 if result is not None:
                     return compose(theta, result)
         return None
-    return compose(query_subs, rec(KB, query))
+    result = rec(KB, query)
+    if result is not None:
+        return compose(query_subs, result)
+    else:
+        return None
 
 def test_01():
     # Test for unify
@@ -91,4 +95,3 @@ def test_01():
 if __name__ == "__main__":
     test_01()
     
-        

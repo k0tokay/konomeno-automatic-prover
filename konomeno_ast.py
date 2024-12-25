@@ -67,6 +67,7 @@ class Edge(AST):
     def __init__(self, relation, modifier=None, label=None):
         self.relation = relation
         self.modifier = modifier
+        modifier["neg"] = 0
     def __repr__(self):
         #return f"Edge({self.relation}, modifier={self.modifier})"
         return f"{self.relation}({self.modifier['source']}, {self.modifier['target']})"
@@ -323,6 +324,7 @@ def kono_to_ast(tree, dict):
     result = rec(tree)
     result = Quantified(scopes[0], result)
     # return result, same_label, all_nodes
+    print("original AST:", result)
     same_node = find_same_node(result, same_label)
     ast = modify_ast(result, same_node, all_nodes)
 
@@ -396,16 +398,23 @@ def modify_ast(ast, same_node, all_nodes):
     G.add_edges_from(same_node)
     connect = nx.connected_components(G)
     connect = [comp for comp in connect]
+    print("connect components:", connect)
     # 代表元
     repr_dict = {}
     for comp in connect:
+        # 時制などの情報を統合する必要がある
+        tense = None
         for id in comp:
             if all_nodes[id].concept is not None:
                 rep = all_nodes[id].modifier["id"]
-                break
+                # break
+                if "tense" in all_nodes[id].modifier:
+                    tense = all_nodes[id].modifier["tense"]
             
         for id in comp:
             repr_dict[id] = rep
+            if tense is not None:
+                all_nodes[id].modifier["tense"] = tense
     
     @rec_template
     def rec(ast):
@@ -420,11 +429,11 @@ def modify_ast(ast, same_node, all_nodes):
             case Graph(nodes, edges):
                 new_nodes = list(set([rec(node) for node in nodes]))
                 new_edges = list(set([rec(edge) for edge in edges]))
-                return Graph(new_nodes, edges)
+                return Graph(new_nodes, new_edges)
             case Quantifier(name, concepts):
                 concepts = [rec(concept) for concept in concepts]
-                concepts = list(set(concepts))
-                return Quantifier(name, concepts)
+                ast.concepts = list(set(concepts))
+                return ast
             
     result = rec(ast)
     return result
@@ -436,10 +445,15 @@ def expand_abbrev(ast):
     # 今
     kans = Node(Concept("kans"), modifier={"id": next(_node_counter), "scope": kostafe})
     kostafe.concepts.append(kans)
+    scopes = []
+    expanded = []
     @rec_template
     def rec(ast):
         match ast:
-            case Node(concept, modifier):  
+            case Node(concept, modifier):
+                if ast in expanded:
+                    return ast
+                expanded.append(ast)
                 nodes = []
                 edges = []
                 if "tense" in modifier:
@@ -448,17 +462,20 @@ def expand_abbrev(ast):
                         nodes += [ast, kans]
                         edges += [Edge(Relation("aki"), {"source": ast, "target": kans})]
                     elif modifier["tense"] == "ik": # 過去
-                        # A-ik -> A aki t* liimes kans
-                        t = Node(Concept("t"), modifier={"id": next(_node_counter), "scope": ast.modifier["scope"]})
-                        ast.modifier["scope"].concepts.append(t)
-                        nodes += [ast, t, kans]
-                        edges += [Edge(Relation("aki"), {"source": ast, "target": t}), Edge(Relation("liimes"), {"source": t, "target": kans})]
+                        # A-ik -> A aki selov liimes kans
+                        # print(scopes, modifier["scope"], modifier["scope"] in scopes)
+                        selov = Node(Concept("selov"), modifier={"id": next(_node_counter), "scope": ast.modifier["scope"]})
+                        ast.modifier["scope"].concepts.append(selov)
+                        # print(ast.modifier["scope"].concepts)
+                        nodes += [ast, selov, kans]
+                        edges += [Edge(Relation("aki"), {"source": ast, "target": selov}), Edge(Relation("liimes"), {"source": selov, "target": kans})]
                     elif modifier["tense"] == "as": # 未来
-                        # A-ik -> A aki t* sammes kans
-                        t = Node(Concept("t"), modifier={"id": next(_node_counter), "scope": ast.modifier["scope"]})
-                        ast.modifier["scope"].concepts.append(t)
-                        nodes += [ast, t, kans]
-                        edges += [Edge(Relation("aki"), {"source": ast, "target": t}), Edge(Relation("sammes"), {"source": t, "target": kans})]
+                        # A-ik -> A aki selov sammes kans
+                        selov = Node(Concept("selov"), modifier={"id": next(_node_counter), "scope": ast.modifier["scope"]})
+                        ast.modifier["scope"].concepts.append(selov)
+                        nodes += [ast, selov, kans]
+                        edges += [Edge(Relation("aki"), {"source": ast, "target": selov}), Edge(Relation("sammes"), {"source": selov, "target": kans})]
+                                  
                 return Graph(nodes, edges)
                     
             case Graph(nodes, edges):
@@ -466,14 +483,16 @@ def expand_abbrev(ast):
                 new_edges = edges.copy()
                 for node in nodes:
                     result = rec(node)
-                    new_nodes.extend(result.nodes)
-                    new_edges.extend(result.edges)
+                    if isinstance(result, Graph):
+                        new_nodes.extend(result.nodes)
+                        new_edges.extend(result.edges)
 
                 new_nodes = list(set(new_nodes))
                 new_edges = list(set(new_edges))
                 return Graph(new_nodes, new_edges)
         
-            case _:
+            case Quantifier(name, concepts):
+                scopes.append(ast)
                 return ast
     
     result = rec(ast)
@@ -601,24 +620,28 @@ def test_01():
     peg = pg.grammar("konomeno.tpeg")
     parser = pg.generate(peg)
     # code = "kon-lilee-α-β waka ja lon-hamin-ik ke ceja fylam ansa le-kalam tos-kon-α, hamin-ik-γ ke lesta kasa ansa mikam-laf tos-kon-β tos; hato waka ja sen-hamin-ik ke ena-nato no"
-    code = "waka ja hamin ke kalam; hato sen-hamin-ik ke ena-nato no"
+    # code = "waka ja hamin-ik ke kalam hato sen-hamin-ik ke ena-nato no"
+    code = "waka ja hamin-ik ke kalam hato sen-hamin aki ena-selov no"
     tree = parser(code)
     print("Tree:", tree)
     ast = kono_to_ast(tree, None)
     print("AST:", ast)
     exp_ast = expand_abbrev(ast)
     print("Expanded AST:", exp_ast)
-    logic = kono_to_logic(ast)
+    logic = kono_to_logic(exp_ast)
     print("Logic:", logic)
     cnf = pla.cnf_convert(logic["sentence"] + logic["axioms"])
     print("CNF:", cnf)
     clauses = pla.cnfs_to_clause(cnf)
+    print("Clauses:", clauses)
     hierarchy_ax = hierarchy("dict/konomeno-v5.json")
     clauses = hierarchy_ax + clauses
     # clauses = clauses + hierarchy_ax
+    print("Query:", logic["question"][0])
     query = pla.cnf_convert(pla.Not(logic["question"][0]))
+    print("Query:", query)
     query = pla.cnf_to_clause(query)[0]
-    print("Clauses:", clauses)
+    print("Query clause:", query)
     with open("test.pl", "w") as f:
         for clause in clauses:
             f.write(f"{clause}.\n")

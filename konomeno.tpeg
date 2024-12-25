@@ -1,9 +1,10 @@
 Discourse = {
-    (COMMENT / SENTORQUES) (";" (COMMENT / SENTORQUES))*
+    (COMMENT / SENTORQUES) (_ PUNCT* _ (COMMENT / SENTORQUES))*
     #Discourse
 } EOF
 
 BR = [\r\n]+
+PUNCT = ';' / BR
 
 COMMENT = "//" (!BR .)* BR
 
@@ -184,8 +185,8 @@ Relation = {
     #Relation
 }
 
-LEFTPAREN = "cu" / "min" / "lesta" / "meide"
-RIGHTPAREN = "nais" / "tos"
+LEFTPAREN = "cu" / "min" / "lesta" / "meide" / "hato"
+RIGHTPAREN = "nais" / "tos" / "no"
 
 RESERVED = 
     Prefix
