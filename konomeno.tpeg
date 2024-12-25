@@ -1,5 +1,5 @@
 Discourse = {
-    (COMMENT / (SENTORQUES (BR / EOF)))*
+    (COMMENT / SENTORQUES) (";" (COMMENT / SENTORQUES))*
     #Discourse
 } EOF
 
@@ -104,8 +104,7 @@ PreNodeQ = {
 }
 
 PreNodePDQ = {
-    'laf'
-    / 'le'
+    'le'
     / 'fe'
     #PreNodePDQ
 }
@@ -120,7 +119,7 @@ PostNodeQ = {
 }
 
 PostNodePDQ = {
-    'サンプル'
+    'laf'
     #PostNodePDQ
 }
 
