@@ -53,7 +53,7 @@ def test_ZFC_ext():
 
 
 def test_ZFC_reg():
-    code = "|:|T^∃ T^L ∃. L.^∀∃-2∃-1 1 ∃-1."
+    code = "||¬|:|T^∃ T^L ∃. L.-1^∀∃-2∃-1 1 ∃-1.∃-2.∀."
     assert_ast_equiv(code)
 
 
@@ -88,7 +88,7 @@ def test_peano_prodsucc():
 
 
 def test_peano_induction():
-    code = "lin pred^∀-1, |[T^∀ succ] 1 ∀. → |T^∀ 1 ∀."
+    code = "lin pred-1^∀, |[T^∀ succ] 1 ∀. → |T^∀ 1 ∀."
     assert_ast_equiv(code)
 
 

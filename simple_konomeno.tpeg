@@ -11,15 +11,15 @@ NotS = {{'¬' #Negation}* AtomS #Literal }
 AtomS =
     { '|' _ Sentence _ QParen #Quantified }
     / { '(' _ Sentence _ ')' #Paren }
-    / { (LTerm / Rel) (_ (LTerm / Rel))* #AppLine }
+    / { LTerm (_ LTerm)* #AppLine }
 
-LTerm = { Term {'ι' #Indiv}? ('^' SupIndex+)? ('-' SubIndex)? #LTerm }
+LTerm = { Term {'ι' #Indiv}? ('-' SubIndex)? ('^' SupIndex+)? #LTerm }
 
 SupIndex = { LQ / LPDQ #SupIndex }
 SubIndex = { Label #SubIndex }
 
 Term = {
-    Const / Class / 'T' / Label
+    Word / 'T' / Label
     / {'[' LTerm _ Func (_ LTerm)* ']' #Function}
     / {':' _ Sentence _ PDQParen #PullDown}
     #Term
@@ -34,10 +34,8 @@ PDQ = { 'L' / 'Fn' / 'Fl' / 'J' #PDQ }
 Q = { '∀' / '∃' #Q }
 
 
-Const = { LOWERCASE #Const }
-Class = { LOWERCASE #Class }
+Word = { LOWERCASE #Word }
 Func = { LOWERCASE #Func }
-Rel = { LOWERCASE #Rel }
 Label = { NUM #Label }
 
 LOWERCASE = [a-z] [0-9a-z]*

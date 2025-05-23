@@ -31,8 +31,8 @@ class Var(AST):
         self.label = self.name if self.name_or_id == "name" else self.id
 
     def __repr__(self):
-        # return f'{self.name}_{self.id}' # デバッグ用
-        return f"{self.name}"
+        return f"{self.name}_{self.id}"  # デバッグ用
+        # return f"{self.name}"
 
 
 @dataclass
@@ -116,6 +116,17 @@ class Exists(AST):
 
     def __repr__(self):
         return f"∃{', '.join(map(str, self.vars))}. {self.body}"
+
+
+@dataclass
+class Quantified(AST):
+    # konomenoのために一般的な量化子も扱えるようにしておく
+    quantifier: str
+    var: Var
+    content: AST
+
+    def __repr__(self):
+        return f"{self.quantifier}{self.var}. {self.content}"
 
 
 @dataclass
