@@ -28,9 +28,9 @@ Term = {
 PDQParen = { LPDQ '.' #PDQParen }
 QParen = { LQ '.' #QParen }
 
-LPDQ = { PDQ '*'? ('-' Label)? #LPDQ }
-LQ = { Q '*'? ('-' Label)? #LQ }
-PDQ = { 'L' #PDQ }
+LPDQ = { PDQ { '*' #Star }? ('-' Label)? #LPDQ }
+LQ = { Q { '*' #Star }? ('-' Label)? #LQ }
+PDQ = { 'L' / 'Fn' / 'Fl' / 'J' #PDQ }
 Q = { '∀' / '∃' #Q }
 
 

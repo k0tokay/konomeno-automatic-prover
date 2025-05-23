@@ -26,7 +26,7 @@ class BinaryOp(AST):
 @dataclass(repr=False)
 class And(BinaryOp):
     def __post_init__(self):
-        self.op = "∧"
+        self.op = ","
 
 
 @dataclass(repr=False)
@@ -58,11 +58,13 @@ class Not(AST):
 @dataclass
 class Quantifier(AST):
     quantifier: str
+    star: bool = False
     label: Optional[str] = None
 
     def __repr__(self):
         label_str = f"-{self.label}" if self.label else ""
-        return f"{self.quantifier}{label_str}"
+        star_str = "*" if self.star else ""
+        return f"{self.quantifier}{star_str}{label_str}"
 
 
 @dataclass(repr=False)
@@ -223,13 +225,15 @@ def simp_kono_to_ast(tree):
 
         elif tag == "LPDQ":
             quantifier = tree[0].getToken()
-            label = tree[1].getToken() if len(tree) > 1 else None
-            return LPDQ(quantifier, label)
+            star = len(tree) > 1 and tree[1].getToken() == "*"
+            label = tree[-1].getTag() == "Label" and tree[-1].getToken() or None
+            return LPDQ(quantifier, star, label)
 
         elif tag == "LQ":
             quantifier = tree[0].getToken()
-            label = tree[1].getToken() if len(tree) > 1 else None
-            return LQ(quantifier, label)
+            star = len(tree) > 1 and tree[1].getToken() == "*"
+            label = tree[-1].getTag() == "Label" and tree[-1].getToken() or None
+            return LQ(quantifier, star, label)
 
         elif tag == "Quantified":
             lq = rec(tree[1][0])
@@ -298,6 +302,7 @@ def test_01():
     parser = pg.generate(peg)
     code = "|:|T^∃ T^L ∃. L.^∀∃-2∃-1 1 ∃-1."
     code = "|||[x^∀-1 dist a] leq d^∃ → [[x^∀-1 f] dist [a f]] leq e^∀-2 ∀-2.∃.∀-2."
+    code = "|:|T^L∀ T^L, T^L∀ T^L ∀*. L*.^∀ eq ∀."
     tree = parser(code)
     tree.dump()
     print("Tree:", tree)
