@@ -7,13 +7,13 @@ Sentence = { ImpS _ { left:^ op:'↔' _ right:ImpS #Iff }* #Sentence }
 ImpS = OrS _ { left:^ op:'→' _ right:OrS #Imp }*
 OrS = AndS _ { left:^ op:'∨' _ right:AndS #Or }*
 AndS = NotS _ { left:^ op:',' _ right:NotS #And }*
-NotS = { '¬' NotS / AtomS #Literal }*
+NotS = {{'¬' #Negation}* AtomS #Literal }
 AtomS =
     { '|' _ Sentence _ QParen #Quantified }
     / { '(' _ Sentence _ ')' #Paren }
-    / { LTerm (_ (LTerm / Rel))* #AppLine }
+    / { (LTerm / Rel) (_ (LTerm / Rel))* #AppLine }
 
-LTerm = { Term ('^' SupIndex+)? ('-' SubIndex)? #LTerm }
+LTerm = { Term {'ι' #Indiv}? ('^' SupIndex+)? ('-' SubIndex)? #LTerm }
 
 SupIndex = { LQ / LPDQ #SupIndex }
 SubIndex = { Label #SubIndex }
@@ -28,10 +28,10 @@ Term = {
 PDQParen = { LPDQ '.' #PDQParen }
 QParen = { LQ '.' #QParen }
 
-LPDQ = PDQ '*'? ('-' Label)?
-LQ = Q '*'? ('-' Label)?
-PDQ = 'L'
-Q = '∀' / '∃'
+LPDQ = { PDQ '*'? ('-' Label)? #LPDQ }
+LQ = { Q '*'? ('-' Label)? #LQ }
+PDQ = { 'L' #PDQ }
+Q = { '∀' / '∃' #Q }
 
 
 Const = { LOWERCASE #Const }
