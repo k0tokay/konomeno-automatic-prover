@@ -49,11 +49,17 @@ class Predicate(AST):
     args: List[AST]
 
     def __repr__(self):
-        return (
-            f"{self.name}({', '.join(map(str, self.args))})"
-            if self.name != "="
-            else f"{self.args[0]} = {self.args[1]}"
-        )
+        if self.name == "∈":
+            if len(self.args[0]) == 1:
+                return f"{self.args[0][0]} ∈ {self.args[1]}"
+            else:
+                return f"{self.args[0]} ∈ {self.args[1]}"
+        else:
+            return (
+                f"{self.name}({', '.join(map(str, self.args))})"
+                if self.name != "="
+                else f"{self.args[0]} = {self.args[1]}"
+            )
 
 
 @dataclass
@@ -123,10 +129,14 @@ class Quantified(AST):
     # konomenoのために一般的な量化子も扱えるようにしておく
     quantifier: str
     var: Var
+    domain: Optional[AST]
     content: AST
 
     def __repr__(self):
-        return f"{self.quantifier}{self.var}. {self.content}"
+        if self.domain is None:
+            return f"({self.quantifier}{self.var}. {self.content})"
+        else:
+            return f"({self.quantifier}{self.var} ∈ {self.domain}. {self.content})"
 
 
 @dataclass

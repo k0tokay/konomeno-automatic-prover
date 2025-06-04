@@ -325,13 +325,10 @@ def rec_template(func):
             case AppLine(terms):
                 return type(ast)([rec(t, *args, **kwargs) for t in terms])
             case LTerm(term, is_indiv, sup_indices, sub_index):
-                return func(
-                    type(ast)(
-                        rec(term, *args, **kwargs), is_indiv, sup_indices, sub_index
-                    ),
-                    *args,
-                    **kwargs,
-                )
+                return func(ast, *args, **kwargs)
+                # return type(ast)(
+                #     rec(term, *args, **kwargs), is_indiv, sup_indices, sub_index
+                # )
             case _:
                 return ast
 
@@ -346,13 +343,11 @@ def max_label(ast):
 
     @rec_template
     def rec(ast):
-        match ast:
-            case LTerm(term, is_indiv, sup_indices, sub_index):
-                nonlocal max_label
-                if sub_index is not None:
-                    max_label = max(max_label, sub_index)
-            case _:
-                pass
+        sub_index = ast.sub_index
+        if sub_index is not None:
+            nonlocal max_label
+            max_label = max(max_label, sub_index)
+        return rec(ast.term)
 
     rec(ast)
     return max_label
@@ -475,7 +470,7 @@ def appline_list(max_length: int = 15):
     return result_ordered
 
 
-def identity_appline(terms, search_list=None):
+def identify_appline(terms, search_list=None):
     if search_list is None:
         search_list = appline_list()
     length = len(terms)
@@ -495,7 +490,40 @@ def Interpret(context, kono_ast):
     scopes_dict = []  # unhashableなのでTupleで入れる
     free_lterms = []
 
+    def search_and_replace(ast, star, kind, label):
+        """
+        labelに合致するquantifierを持つLTermを返し，そのLTermを置換する．
+        """
+        scopes_dict = {}
+        new_vars_dict = {}
+
+        @rec_template
+        def rec(ast):
+            is_indiv, sup_indices, sub_index = (
+                ast.is_indiv,
+                ast.sup_indices,
+                ast.sub_index,
+            )
+            for sup_index in sup_indices:
+                match = (label is None and sup_index.quantifier == kind) or (
+                    label is not None and sup_index.label == label
+                )
+                if match:
+                    scopes_dict.setdefault(sub_index, []).append(ast)
+                    new_sup_indices = [
+                        x
+                        for x in sup_indices
+                        if (x.quantifier != kind if label is None else x.label != label)
+                    ]
+                    new_var = new_vars_dict.setdefault(sub_index, logic.Var("X"))
+                    return LTerm(new_var, is_indiv, new_sup_indices, sub_index)
+            return ast
+
+        replaced_ast = rec(ast)
+        return replaced_ast, new_vars_dict, scopes_dict
+
     def rec(ast):
+        print("rec", scopes_dict)
         nonlocal free_lterms
         match ast:
             case And(left, right):
@@ -515,19 +543,30 @@ def Interpret(context, kono_ast):
             case Discourse(sentences):
                 return [rec(s) for s in sentences]
             case Quantified(lq, content):
-                scopes = search_scope(ast, lq.star, lq.quantifier, lq.label)
-                scopes_dict.append((lq, scopes))
-                free_lterms += scopes
-                return logic.Quantified(lq.quantifier, logic.Var("X"), rec(content))
+                replaced_ast, new_var, scopes = search_and_replace(
+                    ast, lq.star, lq.quantifier, lq.label
+                )
+                if len(scopes) == 0:
+                    raise ValueError(f"Quantifier {lq} has no scope in {ast}")
+                domain = {k: [rec(vi) for vi in v] for k, v in scopes.items()}
+                scopes_dict.append((lq, new_var, scopes))
+                # free_lterms += scopes
+                return logic.Quantified(
+                    lq.quantifier, new_var, domain, rec(replaced_ast.content)
+                )
             case PullDown(lpdq, content):
-                scopes = search_scope(ast, lpdq.star, lpdq.quantifier, lpdq.label)
-                scopes_dict.append((lpdq, scopes))
-                free_lterms += scopes
-                return logic.Quantified(lpdq.quantifier, logic.Var("X"), rec(content))
+                replaced_ast, new_var, scopes = search_and_replace(
+                    ast, lpdq.star, lpdq.quantifier, lpdq.label
+                )
+                domain = {k: [rec(vi) for vi in v] for k, v in scopes.items()}
+                scopes_dict.append((lpdq, new_var, scopes))
+                # free_lterms += scopes
+                return logic.Quantified(
+                    lpdq.quantifier, new_var, domain, rec(replaced_ast.content)
+                )
             case AppLine(terms):
-                print(f"terms: {terms}")
                 terms_rec = [rec(t) for t in terms]
-                pattern = identity_appline(terms)
+                pattern = identify_appline(terms)
                 if pattern.count("R") == 1:
                     args = []
                     for i, p in enumerate(pattern):
@@ -535,20 +574,17 @@ def Interpret(context, kono_ast):
                             args.append(terms_rec[i])
                         elif p == "_":
                             args.append(rec(free_lterms.pop()))
-                    if isinstance(terms[1].term, Word):
+                    if isinstance(terms[1], logic.Var):
+                        pred_name = terms[1]
+                        return logic.Predicate("∈", [tuple(args), pred_name])
+                    elif isinstance(terms[1].term, Word):
                         pred_name = terms[1].term.name
                         return logic.Predicate(pred_name, args)
                     else:
                         pred_name = terms[1].term
-                        return logic.Predicate("∈", tuple(args), pred_name)
+                        return logic.Predicate("∈", [tuple(args), pred_name])
             case LTerm(term, is_indiv, sup_indices, sub_index):
-                if sub_index in map(lambda x: x[0].label, scopes_dict):
-                    # free variableから削除
-                    free_lterms = [t for t in free_lterms if t.sub_index != sub_index]
-                    return logic.Var(f"X{sub_index}")
-                else:
-                    free_lterms.append(ast)
-                    return rec(term)
+                return rec(term)
             case _:
                 return ast
 
@@ -558,9 +594,12 @@ def Interpret(context, kono_ast):
 def test_01():
     peg = pg.grammar("simple_konomeno.tpeg")
     parser = pg.generate(peg)
-    code = "||¬|:|T^∃ T^L ∃. L.-1^∀∃-2∃-1 1 ∃-1.∃-2.∀."
+    # code = "||¬|:|T^∃ T^L ∃. L.-1^∀∃-2∃-1 1 ∃-1.∃-2.∀."
+    # code = "||¬|:|T^∃ T^L ∃. L.-1^∀∃-2∃-1 1 ∃-1.∃-2.∀."
+    # code = ":|T^∃ T^L ∃. L. meacc"
     # code = "|||[x^∀-1 dist a] leq d^∃ → [[x^∀-1 f] dist [a f]] leq e^∀-2 ∀-2.∃.∀-2."
-    # code = "|:|T^L∀ T^L, T^L∀ T^L ∀*. L*.^∀ eq ∀."
+    code = "|:|1^L∀ 2^L, 2^L∀ 1^L ∀*. L*.^∀ eq ∀."
+    # code = "| T^∀ meacc ∀."
     tree = parser(code)
     tree.dump()
     print("Tree:", tree)
@@ -568,6 +607,9 @@ def test_01():
     print("AST:", ast)
     normed_ast = norm(ast)
     print("Normed AST:", normed_ast)
+    t = normed_ast.sentences[0].content.content.content.terms[0]
+    print(type(t), t)
+
     print(Interpret(None, normed_ast))
     # print(appline_list())
 
