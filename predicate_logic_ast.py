@@ -63,6 +63,30 @@ class Predicate(AST):
 
 
 @dataclass
+class Cup(AST):
+    args: List[AST]
+
+    def __repr__(self):
+        return f"{' ∪ '.join(map(str, self.args))}"
+
+
+@dataclass
+class Cap(AST):
+    args: List[AST]
+
+    def __repr__(self):
+        return f"{' ∩ '.join(map(str, self.args))}"
+
+
+@dataclass
+class Prod(AST):
+    args: List[AST]
+
+    def __repr__(self):
+        return f"{' × '.join(map(str, self.args))}"
+
+
+@dataclass
 class Not(AST):
     p: AST
 

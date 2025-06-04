@@ -93,5 +93,5 @@ def test_peano_induction():
 
 
 def test_eps_delta():
-    code = "|||[x^∀-1 dist a] leq d^∃ → [[x^∀-1 f] dist [a f]] leq e^∀-2 ∀-2.∃.∀-2."
+    code = "|||[x^∀-1 dist a] leq d^∃ → [[x^∀-1 f] dist [a f]] leq e^∀-2 ∀-1.∃.∀-2."
     assert_ast_equiv(code)
