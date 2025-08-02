@@ -285,7 +285,10 @@ def simp_kono_to_ast(tree):
         elif tag == "ComplexLTerm":
             term = rec(tree[0])
             sup_indices = [rec(t) for t in tree[1:]]
-            return LTerm(term, sup_indices)
+            lterm = term
+            for sup_index in sup_indices:
+                lterm = LTerm(lterm, [sup_index])
+            return lterm
 
         elif tag == "Function":
             name = rec(tree[1])
@@ -345,6 +348,51 @@ def rec_template(func):
                 return type(ast)([rec(t, *args, **kwargs) for t in terms])
             case Function(name, func_args):
                 return type(ast)(name, [rec(arg, *args, **kwargs) for arg in func_args])
+            case LTerm(term, sup_indices):
+                return func(ast, *args, **kwargs)
+            case _:
+                return ast
+
+    return rec
+
+
+def rec_template_with_quantifier(func):
+    def rec(ast, *args, **kwargs):
+        match ast:
+            case Discourse(sentences):
+                return type(ast)([rec(s, *args, **kwargs) for s in sentences])
+            case Sentence(content):
+                return type(ast)(rec(content, *args, **kwargs))
+            case And(left, right):
+                return type(ast)(
+                    rec(left, *args, **kwargs), rec(right, *args, **kwargs)
+                )
+            case Or(left, right):
+                return type(ast)(
+                    rec(left, *args, **kwargs), rec(right, *args, **kwargs)
+                )
+            case Imp(left, right):
+                return type(ast)(
+                    rec(left, *args, **kwargs), rec(right, *args, **kwargs)
+                )
+            case Iff(left, right):
+                return type(ast)(
+                    rec(left, *args, **kwargs), rec(right, *args, **kwargs)
+                )
+            case Not(content):
+                return type(ast)(rec(content, *args, **kwargs))
+            case Paren(content):
+                return type(ast)(rec(content, *args, **kwargs))
+            case Quantified(lq, content):
+                return func(ast, *args, **kwargs)
+            case PullDown(lpdq, content):
+                return func(ast, *args, **kwargs)
+            case AppLine(terms):
+                return type(ast)([rec(t, *args, **kwargs) for t in terms])
+            case Function(name, func_args):
+                return type(ast)(name, [rec(arg, *args, **kwargs) for arg in func_args])
+            case LaTerm(term, alpha):
+                return type(ast)(rec(term, *args, **kwargs), alpha)
             case LTerm(term, sup_indices):
                 return func(ast, *args, **kwargs)
             case _:

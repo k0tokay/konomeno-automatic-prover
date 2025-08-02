@@ -1,10 +1,12 @@
 import itertools
+from collections import OrderedDict, defaultdict
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import pegtree as pg
 
 import predicate_logic_ast as logic
 import simple_konomeno_ast as kono_ast
-from simple_konomeno_ast import rec_template
+from simple_konomeno_ast import rec_template, rec_template_with_quantifier
 
 _label_counter = itertools.count(100)
 
@@ -47,151 +49,168 @@ def add_label(ast, start_label=None):
     return rec(ast)
 
 
-def search_scope(ast, star, kind, label):
-    """
-    labelに合致するquantifierを持つLTermのlabelを返す．
-    """
-    scopes = []
+# 返値の型エイリアス
+ScopeMap = Dict[Tuple[str, int | None], List[kono_ast.LTerm]]
+ScopeDict = Dict[int, List[kono_ast.LTerm]]
 
-    @rec_template
-    def rec(ast):
-        is_indiv, sup_indices, sub_index = ast.is_indiv, ast.sup_indices, ast.sub_index
-        # **最初の**quantifierがkindと一致するかどうかをチェック
-        if label is None:
-            match = len(sup_indices) > 0 and sup_indices[0].quantifier == kind
+
+def strip_sup(term: kono_ast.LTerm | kono_ast.AST):
+    """
+    LTerm の鎖 (sup_indices を外側→内側に持つ) を剥いで
+    最深部 (= 添字の無い基底項) を返す。
+    """
+    t = term
+    while isinstance(t, kono_ast.LTerm):
+        t = t.term  # LTerm(term, sup_indices) の term を辿る
+    return t
+
+
+def group_by_subindex(lterms: List[kono_ast.LTerm]) -> ScopeDict:
+    """
+    Parameters
+    ----------
+    lterms : search_scope で束縛元が分かった LTerm 群
+             （量化子 q,i が同じクラスに属するもの）
+    Returns
+    -------
+    groups : {sub_index: [LTerm, ...]}  昇順で安定化
+    """
+    base2sub: "OrderedDict[int, int]" = OrderedDict()  # id(base) → sub_index
+    groups: ScopeDict = {}
+
+    for lt in lterms:
+        base = strip_sup(lt)  # 添字の無い基底項
+        key = id(base)
+
+        # まだ sub_index が無ければ採番
+        if key not in base2sub:
+            sub_idx = len(base2sub)  # 0,1,2…  登場順
+            base2sub[key] = sub_idx
         else:
-            match = len(sup_indices) > 0 and sup_indices[0].label == label
+            sub_idx = base2sub[key]
 
-        if match:
-            scopes.append(sub_index)
-        if star or not match:
-            return rec(ast.term)
-        else:
-            return ast
+        groups.setdefault(sub_idx, []).append(lt)
 
-    rec(ast)
-    return scopes
+    return groups
 
 
-def replace_scope(ast, kind, label, scopes):
+def search_scope(ast) -> ScopeMap:
     """
-    labelに合致するquantifierを持つLTermを置換する．
+    discourse 全体を DFS して
+        (量化子記号, ラベル or None)  ↦  束縛される LTerm オブジェクト群
+    を返す。量化子がラベル無しなら key=(q, None)。
     """
-    vars_dict = {}
-    scopes_dict = {}
+    env_stack: list[Tuple[str, int | None]] = []  # [(q, i), …]  外→内
+    bound: ScopeMap = defaultdict(list)
+    seen_ids: set[int] = set()  # 再登録の重複防止
 
-    @rec_template
-    def rec(ast):
-        term, is_indiv, sup_indices, sub_index = (
-            ast.term,
-            ast.is_indiv,
-            ast.sup_indices,
-            ast.sub_index,
-        )
-        if sub_index in scopes:
-            if label is None:
-                has_corresponding = (
-                    len(sup_indices) > 0 and sup_indices[0].quantifier == kind
-                )
-            else:
-                has_corresponding = (
-                    len(sup_indices) > 0 and sup_indices[0].label == label
-                )
+    # --------------------------------------------------------------
+    @rec_template_with_quantifier
+    def walk(node):
+        match node:
+            # ---- 量化子ノード ------------------------------------
+            case kono_ast.Quantified(qop, body):
+                if qop.label:
+                    env_stack.append((qop.quantifier, qop.label[0]))
+                else:
+                    env_stack.append((qop.quantifier, None))
+                walk(body)
+                env_stack.pop()
 
-            if has_corresponding:
-                sup_indices = sup_indices[1:]
+            case kono_ast.PullDown(qop, body):
+                if qop.label:
+                    env_stack.append((qop.quantifier, qop.label[0]))
+                else:
+                    env_stack.append((qop.quantifier, None))
+                walk(body)
+                env_stack.pop()
 
-            if sub_index not in scopes_dict:
-                scopes_dict[sub_index] = []
-            scopes_dict[sub_index].append(
-                kono_ast.LTerm(term, is_indiv, sup_indices, sub_index)
-            )
-            if sub_index not in vars_dict:
-                vars_dict[sub_index] = logic.Var("X")
-            new_sub_index = next(_label_counter)
-            return kono_ast.LTerm(
-                vars_dict[sub_index], is_indiv, sup_indices, new_sub_index
-            )
-        return kono_ast.LTerm(rec(term), is_indiv, sup_indices, sub_index)
+            # ---- LTerm：sup_index と環境スタックの照合 ----------
+            case kono_ast.LTerm(inner, sups):
+                for sup in sups:
+                    for q, lab in reversed(env_stack):
+                        if sup.quantifier != q:
+                            continue
+                        if lab is None or sup.label == lab:
+                            key = (q, lab)  # 束縛元
+                            if id(node) not in seen_ids:
+                                bound[key].append(node)
+                                seen_ids.add(id(node))
+                            break  # 最も近い束縛で確定
+                walk(inner)  # 内側の項を続行
 
-    return rec(ast), vars_dict, scopes_dict
+    walk(ast)
+    return bound
 
 
-# todo: search scopeとreplace scopeは分けないといけない
-def search_and_replace(ast, star, kind, label):
+def build_first_scope(scopes_dict: ScopeDict, rec):
     """
-    labelに合致するquantifierを持つLTermを返し，そのLTermを置換する．
+    scopes_dict : {sub_index: [LTerm, …]}
+      └ replace_scope が返す “同値クラス毎に集めた LTerm 群”
+    rec         : Interpret 内部で使っている AST→logic 変換関数
+
+    返り値      : 第1スコープ (= 交叉 ∩ と直積 × で組んだ論理式)
     """
+    # 1) サブインデックスの安定順序を決定
+    key_order = sorted(scopes_dict.keys())
 
-    scopes = search_scope(ast, star, kind, label)
+    # 2) クラス毎に ∩ を立てる
+    class_domains: list[logic.Node] = []
+    for k in key_order:
+        atoms = [rec(t) for t in scopes_dict[k]]
+        class_domains.append(atoms[0] if len(atoms) == 1 else logic.Cap(atoms))
 
-    if len(scopes) == 0:
-        raise ValueError(f"Quantifier {kind}-{label} has no scope in {ast}")
+    # 3) クラスが 1 つならそのまま、複数あれば ×（Prod）
+    return class_domains[0] if len(class_domains) == 1 else logic.Prod(class_domains)
 
-    replaced_ast, new_vars_dict, scopes_dict = replace_scope(ast, kind, label, scopes)
-    return replaced_ast, new_vars_dict, scopes_dict
 
+def replace_scope(body_ast, scope_dict: ScopeDict):
     """
-    scopes_dict = {}
-    new_vars_dict = {}
+    Parameters
+    ----------
+    body_ast    : Quantified / PullDown の body 部分 (AST)
+    scope_dict  : search_scope → group_by_subindex などで得た
+                  {sub_index: [LTerm, ...]} という “同値クラス” 辞書
 
-    @rec_template
-    def rec(ast):
-        is_indiv, sup_indices, sub_index = ast.is_indiv, ast.sup_indices, ast.sub_index
-
-        # starがFalseかつlabelがNoneの場合、一度だけmatchしたら以降は置換しない
-        if not star and label is None:
-            # すでに置換したsub_indexを記録する
-            if not hasattr(rec, "matched_sub_indices"):
-                rec.matched_sub_indices = set()
-        for sup_index in sup_indices:
-            match = (label is None and sup_index.quantifier == kind) or (
-                label is not None and sup_index.label == label
-            )
-            if match:
-                if not star and label is None:
-                    if sub_index in rec.matched_sub_indices:
-                        return ast
-                    rec.matched_sub_indices.add(sub_index)
-                scopes_dict.setdefault(sub_index, []).append(ast)
-                new_sup_indices = [
-                    x
-                    for x in sup_indices
-                    if (x.quantifier != kind if label is None else x.label != label)
-                ]
-                new_var = new_vars_dict.setdefault(sub_index, logic.Var("X"))
-                return kono_ast.LTerm(new_var, is_indiv, new_sup_indices, sub_index)
-        return ast
-
-    replaced_ast = rec(ast)
-    # starがTrueかつlabelがNoneの場合、状態をリセット
-    if not star and label is None and hasattr(rec, "matched_sub_indices"):
-        del rec.matched_sub_indices
-    return replaced_ast, new_vars_dict, scopes_dict"""
-
-
-def norm(ast):
-    """
-    ASTをより意味論的に単純な形に変換する．
+    Returns
+    -------
+    new_body    : LTerm を Var に置換した AST
+    var_order   : List[logic.Var]
+                  sub_index の昇順で並べた “導入された変数” リスト
     """
 
-    normed_ast = add_label(ast)
-    return normed_ast
+    # ------------------------------------------------------------------
+    # 1) 置換マップを作成:  id(LTerm) ↦ logic.Var
+    # ------------------------------------------------------------------
+    key_order: List[int] = sorted(scope_dict.keys())  # 安定した順序
+    var_order: List[logic.Var] = []  # 戻り値用
 
+    replace_map: Dict[int, logic.Var] = {}  # id(node) → Var
+    for k in key_order:
+        var = logic.Var(f"x{k}")
+        var_order.append(var)
+        for lt in scope_dict[k]:
+            replace_map[id(lt)] = var
 
-def find_same_lterm(ast, search_label):
-    same_lterm = []
+    # ------------------------------------------------------------------
+    # 2) body_ast を DFS し、該当 LTerm を Var に差し替え
+    #    （量化子境界は rec_template_with_quantifier が自動でスキップ）
+    # ------------------------------------------------------------------
+    @rec_template_with_quantifier
+    def walk(node):
+        # LTerm ノードだけがここに来る
+        match node:
+            case kono_ast.LTerm(term, sup_indices):
+                rep = replace_map.get(id(node))
+                if rep is not None:
+                    return rep  # ← 置換成功
+                # 束縛対象でなければ再帰的に内部を探索
+                return kono_ast.LTerm(walk(term), sup_indices)
+            case _:
+                return node  # 量化子などはそのまま
 
-    @rec_template
-    def rec(ast):
-        match ast:
-            case kono_ast.LTerm(term, is_indiv, sup_indices, sub_index):
-                if sub_index == search_label:
-                    same_lterm.append(ast)
-                return ast
-
-    rec(ast)
-    return same_lterm
+    new_body = walk(body_ast)
+    return new_body, var_order
 
 
 def appline_list(max_length: int = 15):
@@ -214,10 +233,11 @@ def appline_list(max_length: int = 15):
 
     # ---------- レイヤー 0（省略なし） ----------
     for n in range(max_length + 1):
-        if n >= 2:
-            add("tR" + "t" * (n - 2))  # tRtt...
         if n % 2 == 1:
             add("t" + "Rt" * (n // 2))  # tRtRt...
+    for n in range(max_length + 1):
+        if n >= 2:
+            add("tR" + "t" * (n - 2))  # tRtt...
 
     # ---------- レイヤー 1 以降 ----------
     prev_layer = [list(d.keys()) for d in buckets]
@@ -240,32 +260,82 @@ def appline_list(max_length: int = 15):
     return result_ordered
 
 
-def identify_appline(terms, search_list=None):
-    if search_list is None:
-        search_list = appline_list()
-    length = len(terms)
-    if length > len(search_list):
-        raise ValueError(f"Search list is too short: {length} > {len(search_list)}")
-    checklist = search_list[length]
-
-    # 今のところは最初のものを返すだけとする．
-    return checklist[0]
+class PatternTag:
+    R = "R"  # 述語
+    I = "I"  # 項（individual term）
+    E = "E"  # 自由型（なんでも通す）
+    # ほかにも必要なら追加
 
 
-def Interpret(context, ast):
+class MatchResult(NamedTuple):
+    pattern: List[str]  # マッチした構文パターン（例：['I', 'R', 'I']）
+    args: List[kono_ast.LaTerm]  # 実際に対応した Term 群（同じ長さ）
+    rest: List[kono_ast.LaTerm]  # 残りの AppLine（pattern より右側）
+
+
+def is_predicate(term: kono_ast.LaTerm) -> bool:
+    return isinstance(term, kono_ast.LTerm) and term.tag == "R"
+
+
+def is_individual(term: kono_ast.LaTerm) -> bool:
+    return not isinstance(term, kono_ast.LTerm) or term.tag in ("I", None)
+
+
+# ------------------------------------------------------------
+def identify_appline(
+    appline: List[kono_ast.LaTerm], get_patterns
+) -> Optional[MatchResult]:
     """
-    命題論理部分のみ対応したKonoméno AST→述語論理ASTの変換。
-    context: 現状未使用（将来の拡張用）
+    Parameters
+    ----------
+    appline : AppLine ノードの中身（List[LaTerm]）
+    get_patterns : Callable[[int], List[List[str]]]
+        長さ n の構文パターン一覧を返す関数
 
+    Returns
+    -------
+    MatchResult(pattern, args, rest) or None
+    """
+    n = len(appline)
+    for k in range(n, 0, -1):  # 長いもの優先
+        head = appline[:k]
+        tail = appline[k:]
+        patterns = get_patterns(k)  # 例えば [['I','R'], ['I','I','R']] など
+
+        for pat in patterns:
+            assert len(pat) == k
+            match = True
+            for term, tag in zip(head, pat):
+                if tag == PatternTag.R:
+                    if not is_predicate(term):  # ex: AppLine が述語項であるか
+                        match = False
+                        break
+                elif tag == PatternTag.I:
+                    if not is_individual(term):  # ex: AppLine が項かどうか
+                        match = False
+                        break
+                elif tag == PatternTag.E:
+                    continue  # なんでも OK
+                else:
+                    raise ValueError(f"Unknown tag: {tag}")
+
+            if match:
+                return MatchResult(pattern=pat, args=head, rest=tail)
+
+    return None
+
+
+def Interpret(context, rho, ast):
+    """
     エラーの種類
     - Quantifierがscopeを持たない
     - AppLineの省略項(=ゼロ照応)が先行詞を持たない
     """
-    scopes_dict = []
-    free_lterms = []
+    # 1) スコープを取得
+    scopes_dict = search_scope(ast)
 
     def rec(ast):
-        nonlocal scopes_dict, free_lterms
+        nonlocal scopes_dict
         match ast:
             case kono_ast.And(left, right):
                 return logic.And(rec(left), rec(right))
@@ -284,28 +354,27 @@ def Interpret(context, ast):
             case kono_ast.Discourse(sentences):
                 return [rec(s) for s in sentences]
             case kono_ast.Quantified(lq, content) | kono_ast.PullDown(lq, content):
-                replaced_ast, new_vars_dict, scopes = search_and_replace(
-                    ast, lq.star, lq.quantifier, lq.label
+                # ① 同値クラス化（“sub_index”キーごとに分ける関数は既存想定）
+                scope_dict = group_by_subindex(
+                    scopes_dict[(lq.quantifier, lq.label[0] if lq.label else None)]
                 )
 
-                if len(scopes) == 0:
-                    raise ValueError(f"Quantifier {lq} has no scope in {ast}")
+                # ② LTerm → Var 置換
+                replaced_body, var_order = replace_scope(content, scope_dict)
 
-                domain_dict = {k: [rec(vi) for vi in v] for k, v in scopes.items()}
-                key_order = sorted(domain_dict.keys())
-                domain = logic.Prod([logic.Cap(domain_dict[key]) for key in key_order])
+                # ③ 第1スコープのドメイン要素を生成
+                domain = build_first_scope(scope_dict, rec)
 
-                new_vars = [new_vars_dict[key] for key in key_order]
-                if len(new_vars) == 1:
-                    new_vars = new_vars[0]
-                else:
-                    new_vars = tuple(new_vars)
-
-                scopes_dict.append((lq, new_vars, scopes))
+                # ④ 量化子ノードを作って上に積む
                 return logic.Quantified(
-                    lq.quantifier, new_vars, domain, rec(replaced_ast.content)
+                    quantifier=lq.quantifier,
+                    var=var_order,
+                    domain=domain,
+                    content=rec(replaced_body),
                 )
             case kono_ast.AppLine(terms):
+                return kono_ast.AppLine([rec(t) for t in terms])
+                """
                 terms_rec = [rec(t) for t in terms]
                 pattern = identify_appline(terms)
                 if pattern.count("R") == 1:
@@ -323,9 +392,8 @@ def Interpret(context, ast):
                         return logic.Predicate(pred_name, args)
                     else:
                         pred_name = terms[1].term
-                        return logic.Predicate("∈", [tuple(args), pred_name])
-            case kono_ast.LTerm(term, is_indiv, sup_indices, sub_index):
-                # return kono_ast.LTerm(rec(term), is_indiv, sup_indices, sub_index)
+                        return logic.Predicate("∈", [tuple(args), pred_name])"""
+            case kono_ast.LTerm(term, sup_indices):
                 return rec(term)
             case _:
                 return ast
@@ -462,11 +530,11 @@ def test_01():
     code = "|[1^∀ prod [2^∀ succ]] eq [[1 prod 2] add 1] ∀*."
     tree = parser(code)
     tree.dump()
-    print("Tree:", tree)
+    # print("Tree:", tree)
     ast = kono_ast.simp_kono_to_ast(tree)
     print("AST:", ast)
     normed_ast = norm(ast)
-    print("Normed AST:", normed_ast)
+    # print("Normed AST:", normed_ast)
 
     logic_ast = Interpret(None, normed_ast)
     print("Interpreted:", logic_ast)
@@ -474,5 +542,20 @@ def test_01():
     # print(appline_list())
 
 
+def test_02():
+    peg = pg.grammar("simple_konomeno.tpeg")
+    parser = pg.generate(peg)
+    tree = parser("|x^∀ eat ∀|")  # 例
+    ast = kono_ast.simp_kono_to_ast(tree)
+    scopes = search_scope(ast)
+    logic_ast = Interpret(None, None, ast)
+
+    # print(scopes)
+    print(logic_ast)
+
+    for (q, lab), lterms in scopes.items():
+        print(f"{q}{'' if lab is None else lab}  binds  {len(lterms)} term(s)")
+
+
 if __name__ == "__main__":
-    test_01()
+    test_02()

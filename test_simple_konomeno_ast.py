@@ -48,7 +48,7 @@ def test_quantified():
 
 
 def test_ZFC_ext():
-    code = "|:|T^L-1∀ T^L-2, T^L-2∀ T^L-1 ∀| L-1-2:^∀ eq ∀|"
+    code = "|:|T^L-1^∀ T^L-2, T^L-2^∀ T^L-1 ∀| L-1-2:^∀ eq ∀|"
     assert_ast_equiv(code)
 
 

@@ -16,7 +16,7 @@ AtomS =
 LaTerm = {LTerm ('_' ALPHA)? #LaTerm}
 ALPHA = 'I' / 'R'
 
-LTerm = { Term '^' (LQ / LPDQ)+ #ComplexLTerm }
+LTerm = { Term ('^' (LQ / LPDQ))+ #ComplexLTerm }
     / { Term #SimpleLTerm }
 
 Term = {
