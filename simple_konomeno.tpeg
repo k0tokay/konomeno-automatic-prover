@@ -11,12 +11,13 @@ NotS = {{'¬' #Negation}* AtomS #Literal }
 AtomS =
     { '|' _ Sentence _ QParen #Quantified }
     / { '(' _ Sentence _ ')' #Paren }
-    / { LTerm (_ LTerm)* #AppLine }
+    / { LaTerm (_ LaTerm)* #AppLine }
 
-LTerm = { Term {'ι' #Indiv}? ('-' SubIndex)? ('^' SupIndex+)? #LTerm }
+LaTerm = {LTerm ('_' ALPHA)? #LaTerm}
+ALPHA = 'I' / 'R'
 
-SupIndex = { LQ / LPDQ #SupIndex }
-SubIndex = { Label #SubIndex }
+LTerm = { Term '^' (LQ / LPDQ)+ #ComplexLTerm }
+    / { Term #SimpleLTerm }
 
 Term = {
     Word / 'T' / Label
@@ -25,12 +26,14 @@ Term = {
     #Term
 }
 
-PDQParen = { LPDQ '.' #PDQParen }
-QParen = { LQ '.' #QParen }
+PDQParen = { LsPDQ ':' #PDQParen }
+QParen = { LsQ '|' #QParen }
 
-LPDQ = { PDQ { '*' #Star }? ('-' Label)? #LPDQ }
-LQ = { Q { '*' #Star }? ('-' Label)? #LQ }
-PDQ = { 'L' / 'Fn' / 'Fl' / 'J' #PDQ }
+LsPDQ = { PDQ ('-' Label)* #LsPDQ }
+LPDQ = { PDQ ('-' Label)? #LPDQ }
+LQ = { Q ('-' Label)? #LQ }
+LsQ = { Q ('-' Label)* #LsQ }
+PDQ = { 'L' / 'F' / 'J' #PDQ }
 Q = { '∀' / '∃' #Q }
 
 

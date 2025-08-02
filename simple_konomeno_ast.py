@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import List, Union
 
 
 @dataclass
@@ -53,13 +53,14 @@ class Not(AST):
 @dataclass
 class Quantifier(AST):
     quantifier: str
-    star: bool = False
-    label: Optional[str] = None
+    label: List[str]
 
     def __repr__(self):
-        label_str = f"-{self.label}" if self.label else ""
-        star_str = "*" if self.star else ""
-        return f"{self.quantifier}{star_str}{label_str}"
+        if self.label:
+            label_str = "".join([f"-{l}" for l in self.label])
+        else:
+            label_str = ""
+        return f"{self.quantifier}{label_str}"
 
 
 @dataclass(repr=False)
@@ -78,7 +79,7 @@ class Quantified(AST):
     content: AST
 
     def __repr__(self):
-        return f"|{self.content} {self.lq}."
+        return f"|{self.content} {self.lq}|"
 
 
 @dataclass
@@ -100,22 +101,27 @@ class AppLine(AST):
 @dataclass
 class LTerm(AST):
     term: AST
-    is_indiv: bool = False
     sup_indices: List[str] = None
-    sub_index: Optional[str] = None
 
     def __post_init__(self):
         if self.sup_indices is None:
             self.sup_indices = []
 
     def __repr__(self):
-        indiv = "ι" if self.is_indiv else ""
         sup = f"^{''.join(map(str, self.sup_indices))}" if self.sup_indices else ""
-        sub = f"-{self.sub_index}" if self.sub_index else ""
-        if str(self.term) == "T" and self.sub_index:
-            return f"{self.sub_index}{indiv}{sup}"
+        return f"{self.term}{sup}"
+
+
+@dataclass
+class LaTerm(AST):
+    term: AST
+    alpha: str
+
+    def __repr__(self):
+        if self.alpha:
+            return f"{self.term}_{self.alpha}"
         else:
-            return f"{self.term}{indiv}{sub}{sup}"
+            return f"{self.term}"
 
 
 @dataclass
@@ -162,7 +168,7 @@ class PullDown(AST):
     content: AST
 
     def __repr__(self):
-        return f":{self.content} {self.lpdq}."
+        return f":{self.content} {self.lpdq}:"
 
 
 @dataclass
@@ -218,22 +224,47 @@ def simp_kono_to_ast(tree):
                 result = Not(result)
             return result
 
-        elif tag == "LPDQ":
-            quantifier = tree[0].getToken()
-            star = len(tree) > 1 and tree[1].getToken() == "*"
-            label = tree[-1].getTag() == "Label" and int(tree[-1].getToken()) or None
-            return LPDQ(quantifier, star, label)
-
-        elif tag == "LQ":
-            quantifier = tree[0].getToken()
-            star = len(tree) > 1 and tree[1].getToken() == "*"
-            label = tree[-1].getTag() == "Label" and int(tree[-1].getToken()) or None
-            return LQ(quantifier, star, label)
-
         elif tag == "Quantified":
             lq = rec(tree[1][0])
             content = rec(tree[0])
             return Quantified(lq, content)
+
+        elif tag == "PullDown":
+            lpdq = rec(tree[1][0])
+            content = rec(tree[0])
+            return PullDown(lpdq, content)
+
+        elif tag == "LPDQ":
+            quantifier = tree[0].getToken()
+            if tree[-1].getTag() == "Label":
+                return LPDQ(quantifier, [int(tree[-1].getToken())])
+            else:
+                return LPDQ(quantifier, [])
+
+        elif tag == "LQ":
+            quantifier = tree[0].getToken()
+            if tree[-1].getTag() == "Label":
+                return LQ(quantifier, [int(tree[-1].getToken())])
+            else:
+                return LQ(quantifier, [])
+
+        elif tag == "LsPDQ":
+            quantifier = tree[0].getToken()
+            labels = [
+                int(tree[i].getToken())
+                for i in range(1, len(tree))
+                if tree[i].getTag() == "Label"
+            ]
+            return LPDQ(quantifier, labels)
+
+        elif tag == "LsQ":
+            quantifier = tree[0].getToken()
+            labels = [
+                int(tree[i].getToken())
+                for i in range(1, len(tree))
+                if tree[i].getTag() == "Label"
+            ]
+            return LQ(quantifier, labels)
 
         elif tag == "Paren":
             return Paren(rec(tree[0]))
@@ -242,26 +273,19 @@ def simp_kono_to_ast(tree):
             terms = [rec(t) for t in tree]
             return AppLine(terms)
 
-        elif tag == "LTerm":
+        elif tag == "LaTerm":
             term = rec(tree[0])
-            is_indiv = len(tree) > 1 and tree[1].getToken() == "ι"
-            sup_indices = []
-            sub_index = None
-            i = 2 if is_indiv else 1
-            if len(tree[0]) > 0 and tree[0][0].getTag() == "Label":
-                sub_index = int(tree[0][0].getToken())  # int型に変換
-            while i < len(tree):
-                if tree[i].getTag() == "SupIndex":
-                    sup_indices.append(rec(tree[i][0]))
-                elif tree[i].getTag() == "SubIndex":
-                    sub_index = int(tree[i].getToken())  # int型に変換
-                i += 1
-            return LTerm(term, is_indiv, sup_indices, sub_index)
+            alpha = tree[1].getToken() if len(tree) > 1 else None
+            return LaTerm(term, alpha)
 
-        elif tag == "PullDown":
-            lpdq = rec(tree[1][0])
-            content = rec(tree[0])
-            return PullDown(lpdq, content)
+        elif tag == "SimpleLTerm":
+            term = rec(tree[0])
+            return LTerm(term, sup_indices=[])
+
+        elif tag == "ComplexLTerm":
+            term = rec(tree[0])
+            sup_indices = [rec(t) for t in tree[1:]]
+            return LTerm(term, sup_indices)
 
         elif tag == "Function":
             name = rec(tree[1])
@@ -321,7 +345,7 @@ def rec_template(func):
                 return type(ast)([rec(t, *args, **kwargs) for t in terms])
             case Function(name, func_args):
                 return type(ast)(name, [rec(arg, *args, **kwargs) for arg in func_args])
-            case LTerm(term, is_indiv, sup_indices, sub_index):
+            case LTerm(term, sup_indices):
                 return func(ast, *args, **kwargs)
             case _:
                 return ast
