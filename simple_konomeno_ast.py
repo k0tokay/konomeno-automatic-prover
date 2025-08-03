@@ -274,6 +274,7 @@ def simp_kono_to_ast(tree):
             return AppLine(terms)
 
         elif tag == "LaTerm":
+            print(tree)
             term = rec(tree[0])
             alpha = tree[1].getToken() if len(tree) > 1 else None
             return LaTerm(term, alpha)

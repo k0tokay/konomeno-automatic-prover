@@ -1,6 +1,8 @@
+import functools
 import itertools
+import json
 from collections import OrderedDict, defaultdict
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pegtree as pg
 
@@ -260,72 +262,85 @@ def appline_list(max_length: int = 15):
     return result_ordered
 
 
-class PatternTag:
-    R = "R"  # 述語
-    I = "I"  # 項（individual term）
-    E = "E"  # 自由型（なんでも通す）
-    # ほかにも必要なら追加
+def read_dictionary(filename):
+    with open(filename, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
+    words = data["words"]
+    R_dict = {}
+    F_dict = {}
+    for word in words:
+        if word is None:
+            continue
+        if word["category"] == "概念":
+            if word["is_function"] is None or not word["is_function"]:
+                R_dict.setdefault(1, []).append(word["entry"])
+            else:
+                F_dict.setdefault(0, []).append(word["entry"])
+        elif word["category"] == "関係":
+            arity = len(word["arguments"])
+            if word["is_function"] is None or not word["is_function"]:
+                R_dict.setdefault(arity, []).append(word["entry"])
+            else:
+                F_dict.setdefault(arity - 1, []).append(word["entry"])
 
-class MatchResult(NamedTuple):
-    pattern: List[str]  # マッチした構文パターン（例：['I', 'R', 'I']）
-    args: List[kono_ast.LaTerm]  # 実際に対応した Term 群（同じ長さ）
-    rest: List[kono_ast.LaTerm]  # 残りの AppLine（pattern より右側）
-
-
-def is_predicate(term: kono_ast.LaTerm) -> bool:
-    return isinstance(term, kono_ast.LTerm) and term.tag == "R"
-
-
-def is_individual(term: kono_ast.LaTerm) -> bool:
-    return not isinstance(term, kono_ast.LTerm) or term.tag in ("I", None)
+    return R_dict, F_dict
 
 
 # ------------------------------------------------------------
 def identify_appline(
-    appline: List[kono_ast.LaTerm], get_patterns
-) -> Optional[MatchResult]:
+    appline: List[kono_ast.LaTerm], patterns, dictionary
+) -> Optional[str]:
     """
     Parameters
     ----------
     appline : AppLine ノードの中身（List[LaTerm]）
-    get_patterns : Callable[[int], List[List[str]]]
-        長さ n の構文パターン一覧を返す関数
 
     Returns
     -------
-    MatchResult(pattern, args, rest) or None
+    pattern or None
     """
-    n = len(appline)
-    for k in range(n, 0, -1):  # 長いもの優先
-        head = appline[:k]
-        tail = appline[k:]
-        patterns = get_patterns(k)  # 例えば [['I','R'], ['I','I','R']] など
+    R_dict, F_dict = dictionary
+    aitos = {x for k, v in R_dict.items() if k >= 2 for x in v}
+    alkono = {x for k, v in R_dict.items() if k == 1 for x in v}
 
-        for pat in patterns:
-            assert len(pat) == k
-            match = True
-            for term, tag in zip(head, pat):
-                if tag == PatternTag.R:
-                    if not is_predicate(term):  # ex: AppLine が述語項であるか
-                        match = False
-                        break
-                elif tag == PatternTag.I:
-                    if not is_individual(term):  # ex: AppLine が項かどうか
-                        match = False
-                        break
-                elif tag == PatternTag.E:
-                    continue  # なんでも OK
-                else:
-                    raise ValueError(f"Unknown tag: {tag}")
+    n = len(appline.terms)
+    patterns = patterns[n]
+    for pat in patterns:
+        match = True
+        i = 0
+        j = 0
+        while i < len(pat) and j < len(appline.terms):
+            if pat[i] == "_":
+                i += 1
+                continue
+            if appline.terms[j].alpha is None:
+                if isinstance(appline.terms[j].term, logic.Var):
+                    i += 1
+                    j += 1
+                    continue
+                match &= (
+                    appline.terms[j].term.term.name not in aitos or pat[i] == "R"
+                ) and (appline.terms[j].term.term.name not in alkono or pat[i] == "t")
+            else:
+                match &= (pat[i] == "t" and appline.terms[j].alpha == "I") or (
+                    pat[i] == "R" and appline.terms[j].alpha == "R"
+                )
+            i += 1
+            j += 1
+        if match:
+            n_holes = len([lt for lt in pat if lt == "_"])
+            n_t = len([lt for lt in pat if lt == "t"])
+            P = itertools.product(range(n_t), repeat=n_holes)
 
-            if match:
-                return MatchResult(pattern=pat, args=head, rest=tail)
+            for p in P:
+                # 本来はここで型検査とかをするけど難しいのでパス
+                return pat, p
 
-    return None
+    return None, None
 
 
-def Interpret(context, rho, ast):
+def Interpret(context, rho, ast, dictionary, appline_list):
     """
     エラーの種類
     - Quantifierがscopeを持たない
@@ -373,26 +388,45 @@ def Interpret(context, rho, ast):
                     content=rec(replaced_body),
                 )
             case kono_ast.AppLine(terms):
-                return kono_ast.AppLine([rec(t) for t in terms])
-                """
                 terms_rec = [rec(t) for t in terms]
-                pattern = identify_appline(terms)
-                if pattern.count("R") == 1:
-                    args = []
-                    for i, p in enumerate(pattern):
-                        if p == "t":
-                            args.append(terms_rec[i])
-                        elif p == "_":
-                            args.append(rec(free_lterms.pop()))
-                    if isinstance(terms[1], logic.Var):
-                        pred_name = terms[1]
-                        return logic.Predicate("∈", [tuple(args), pred_name])
-                    elif isinstance(terms[1].term, kono_ast.Word):
+                pat, hole_map = identify_appline(ast, appline_list, dictionary)
+                pat_no_holes = [p for p in pat if p != "_"]
+
+                pred_rec = [t for p, t in zip(pat_no_holes, terms_rec) if p == "R"]
+                terms_rec = [t for p, t in zip(pat_no_holes, terms_rec) if p == "t"]
+
+                args = []
+                i_hole = 0
+                i_t = 0
+                for p in pat:
+                    if p == "t":
+                        args.append(terms_rec[i_t])
+                        i_t += 1
+                    elif p == "_":
+                        args.append(terms_rec[hole_map[i_hole]])
+                        i_hole += 1
+
+                print(pat)
+                print(hole_map)
+                print(terms_rec)
+                print(args)
+                print(pred_rec)
+
+                if pat.count("R") == 1:
+                    if isinstance(terms[1].term, kono_ast.Word):
                         pred_name = terms[1].term.name
                         return logic.Predicate(pred_name, args)
                     else:
                         pred_name = terms[1].term
-                        return logic.Predicate("∈", [tuple(args), pred_name])"""
+                        return logic.Predicate("∈", [tuple(args), pred_name])
+                else:
+                    results = []
+                    for m in range(len(pred_rec)):
+                        pred_name = pred_rec[m]
+                        args_i = [args[m], args[m + 1]]
+                        results.append(logic.Predicate(pred_name, args_i))
+                    return functools.reduce(logic.And, results)
+
             case kono_ast.LTerm(term, sup_indices):
                 return rec(term)
             case _:
@@ -520,41 +554,18 @@ def simplify(ast):
     return rec(ast)
 
 
-def test_01():
-    peg = pg.grammar("simple_konomeno.tpeg")
-    parser = pg.generate(peg)
-    code = "||¬|:|T^∃ T^L ∃. L.-1^∀∃-2∃-1 1 ∃-1.∃-2.∀."
-    code = "|||[1^∀-1 dist 2] leq d^∃ → [[1 f] dist [2 f]] leq e^∀-2 ∀-1.∃.∀-2."
-    code = "|:|1^L∀ 2^L, 2^L∀ 1^L ∀*. L*.^∀ eq ∀."
-    # code = "waka ja hamin ke mikam"
-    code = "|[1^∀ prod [2^∀ succ]] eq [[1 prod 2] add 1] ∀*."
-    tree = parser(code)
-    tree.dump()
-    # print("Tree:", tree)
-    ast = kono_ast.simp_kono_to_ast(tree)
-    print("AST:", ast)
-    normed_ast = norm(ast)
-    # print("Normed AST:", normed_ast)
-
-    logic_ast = Interpret(None, normed_ast)
-    print("Interpreted:", logic_ast)
-    print("Simplified:", simplify(logic_ast[0]))
-    # print(appline_list())
-
-
 def test_02():
     peg = pg.grammar("simple_konomeno.tpeg")
     parser = pg.generate(peg)
-    tree = parser("|x^∀ eat ∀|")  # 例
+    tree = parser("waka ja hamin, mikam e")  # 例
     ast = kono_ast.simp_kono_to_ast(tree)
-    scopes = search_scope(ast)
-    logic_ast = Interpret(None, None, ast)
 
-    # print(scopes)
-    print(logic_ast)
+    patterns = appline_list()
+    dictionary = read_dictionary("dict/konomeno-v5.json")
+    logic_ast = Interpret(None, None, ast, dictionary, patterns)
 
-    for (q, lab), lterms in scopes.items():
-        print(f"{q}{'' if lab is None else lab}  binds  {len(lterms)} term(s)")
+    simplified_ast = simplify(logic_ast[0])
+    print(simplified_ast)
 
 
 if __name__ == "__main__":

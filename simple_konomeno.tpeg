@@ -13,8 +13,8 @@ AtomS =
     / { '(' _ Sentence _ ')' #Paren }
     / { LaTerm (_ LaTerm)* #AppLine }
 
-LaTerm = {LTerm ('_' ALPHA)? #LaTerm}
-ALPHA = 'I' / 'R'
+LaTerm = {LTerm ('_' Alpha)? #LaTerm}
+Alpha = {'I' / 'R' #Alpha}
 
 LTerm = { Term ('^' (LQ / LPDQ))+ #ComplexLTerm }
     / { Term #SimpleLTerm }
